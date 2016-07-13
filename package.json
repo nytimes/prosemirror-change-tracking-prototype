@@ -1,0 +1,14 @@
+{
+  "name": "nyt-track-changes",
+  "version": "0.0.1",
+  "description": "Change tracking in ProseMirror documents",
+  "scripts": {
+    "demo": "moduleserve --port 8000 ."
+  },
+  "dependencies": {
+    "prosemirror": "^0.8.0"
+  },
+  "devDependencies": {
+    "moduleserve": "^0.8.0"
+  }
+}

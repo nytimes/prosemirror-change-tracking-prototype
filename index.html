@@ -1,0 +1,19 @@
+<!doctype html>
+
+<meta charset="utf-8"/>
+<title>ProseMirror change tracking demo</title>
+
+<style>
+  .ProseMirror-content { border: 1px solid silver }
+  .inserted { color: green }
+</style>
+
+<h1>Change tracking demo</h1>
+
+<div id=content style="display: none">
+  <h2>Some content</h2>
+  <p>This is a paragraph with some text in it.</p>
+  <p>And this is <strong>another one</strong>!</p>
+</div>
+
+<script src="/moduleserve/load.js" data-module="./demo" data-require></script>
