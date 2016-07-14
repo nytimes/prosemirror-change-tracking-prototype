@@ -13,7 +13,7 @@ function test(name, content, ...rest) {
     plugins: [changeTracking.config({author: "x"})]
   })
   rest.forEach(change => change(pm))
-  let found = changeTracking.get(pm).changes.map(ch => ch.from + "-" + ch.to + "" + ch.old.content).join(" ")
+  let found = changeTracking.get(pm).changes.map(ch => ch.from + "-" + ch.to + "" + ch.deleted.content).join(" ")
   if (found != result) {
     output("Unexpected outcome in <a href='#" + name + "'>" + name + "</a>:\n  " + found.replace(/</, "&lt;") + "\n  " + result.replace(/</, "&lt;"))
     failed++
@@ -102,6 +102,14 @@ test("del_add_cancel_separate_matching_context", "fababab",
      del(4, 5), del(3, 4), del(2, 3), ins(2, "a"), ins(3, "b"), ins(4, "a"),
      "")
 
+test("insert_multiple_after_identical", "abc",
+     ins(2, "a"), ins(3, "a"),
+     '2-4<>')
+
+test("insert_identical_delete_in_front", "abc",
+     ins(4, "bcbc"), del(2, 4),
+     '4-6<>')
+
 test("del_paragraph", "foo\nbar\nbaz",
      del(4, 11),
      '4-4<paragraph, paragraph("bar"), paragraph>')
@@ -119,3 +127,5 @@ test("del_then_restore_paragraph", "foo\nbar",
      "")
 
 output(failed ? failed + " tests failed" : "All passed")
+
+window.onhashchange = () => location.reload()

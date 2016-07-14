@@ -2,18 +2,22 @@ const {Plugin} = require("prosemirror/src/edit")
 const {Transform} = require("prosemirror/src/transform")
 
 class TrackedChange {
-  constructor(from, to, old, author) {
+  constructor(from, to, deleted, author) {
     this.from = from
     this.to = to
-    this.old = old
+    this.deleted = deleted
     this.author = author
   }
 
   map(mapping, inclusive) {
     let from = mapping.map(this.from, inclusive ? -1 : 1)
     let to = mapping.map(this.to, inclusive ? 1 : -1)
-    if (from > to || from == to && !this.old.size) return null
-    return new TrackedChange(from, to, this.old, this.author)
+    if (from > to || from == to && !this.deleted.size) return null
+    return new TrackedChange(from, to, this.deleted, this.author)
+  }
+
+  deletedText() {
+    return this.deleted.content.textBetween(0, this.deleted.content.size, " ")
   }
 }
 
@@ -21,25 +25,14 @@ function applyAndSlice(doc, changes, from, to) {
   let tr = new Transform(doc)
   for (let i = changes.length - 1; i >= 0; i--) {
     let change = changes[i]
-    tr.replace(change.from, change.to, change.old)
+    tr.replace(change.from, change.to, change.deleted)
   }
   return tr.doc.slice(from, tr.map(to))
 }
 
-function findDiff(a, b, pos, minStart) {
-  let start = a.findDiffStart(b, pos)
-  if (!start) return null
-  let {a: endA, b: endB} = a.findDiffEnd(b, pos + a.size, pos + b.size)
-  start = Math.min(start, endA, endB)
-  if (start < minStart) {
-    let dist = minStart - start
-    endA += dist; endB += dist; start += dist
-  }
-  return {start, endA, endB}
-}
-
 function minimizeChange(change, doc, side) {
-  let changedDoc = new Transform(doc).replace(change.from, change.to, change.old).doc
+  let tr = new Transform(doc).replace(change.from, change.to, change.deleted)
+  let changedDoc = tr.doc
 
   let $from = doc.resolve(change.from), sameDepth = $from.depth
   while (change.to > $from.end(sameDepth)) --sameDepth
@@ -52,12 +45,12 @@ function minimizeChange(change, doc, side) {
     let diffStart = node.content.findDiffStart(changedNode.content, nodePos + 1)
     if (!diffStart) return null
     if (diffStart == change.from || diffStart >= change.to) return change
-    return new TrackedChange(diffStart, change.to, changedDoc.slice(diffStart, change.to), change.author)
+    return new TrackedChange(diffStart, change.to, changedDoc.slice(diffStart, tr.map(change.to)), change.author)
   } else {
     let diffEnd = node.content.findDiffEnd(changedNode.content, nodePos + node.content.size + 1,
                                            nodePos + changedNode.content.size + 1)
     if (!diffEnd) return null
-    if (diffEnd.a == change.to || diffEnd.a <= change.from) return change
+    if (diffEnd.a == change.to || diffEnd.a <= change.from || diffEnd.b <= change.from) return change
     return new TrackedChange(change.from, diffEnd.a, changedDoc.slice(change.from, diffEnd.b), change.author)
   }
 }
@@ -88,8 +81,8 @@ exports.changeTracking = new Plugin(class ChangeTracking {
     this.pm.on.transform.remove(this.onTransform)
   }
 
-  onTransform(transform) {
-    if (!this.author) // FIXME split changes when typing inside them?
+  onTransform(transform, _, options) {
+    if (!this.author || options.reverting) // FIXME split changes when typing inside them?
       this.changes = mapChanges(this.changes, transform)
     else
       this.record(transform, this.author)
@@ -127,7 +120,7 @@ exports.changeTracking = new Plugin(class ChangeTracking {
       }
 
       let newFrom = Math.min(change.from, from), newTo = Math.max(changes[changes.length - 1].to, to)
-      let slice = newContent ? applyAndSlice(doc, changes, newFrom, newTo) : change.old
+      let slice = newContent ? applyAndSlice(doc, changes, newFrom, newTo) : change.deleted
       updatedChanges.push(this.changes[i] = new TrackedChange(newFrom, newTo, slice, change.author),
                           from <= changes[0].from ? -1 : 1)
       return
@@ -141,7 +134,7 @@ exports.changeTracking = new Plugin(class ChangeTracking {
     let iA = 0
     for (let iC = 0; iC < this.changes.length; iC++) {
       let change = this.changes[iC], matched = false
-      let deletedText = change.old.content.textBetween(0, change.old.content.size, " ")
+      let deletedText = change.deletedText()
       while (iA < this.annotations.length) {
         let ann = this.annotations[iA]
         if (ann.from > change.to) break
@@ -162,6 +155,26 @@ exports.changeTracking = new Plugin(class ChangeTracking {
       this.pm.removeRange(this.annotations[iA])
     }
     this.annotations.length = iA
+  }
+
+  forgetChange(change) {
+    let found = this.changes.indexOf(change)
+    if (found == -1) return false
+    this.changes.splice(found, 1)
+    return true
+  }
+
+  acceptChange(change) {
+    if (this.forgetChange(change))
+      this.updateAnnotations()
+  }
+
+  revertChange(change) {
+    if (this.forgetChange(change))
+      this.pm.tr.replace(change.from, change.to, change.deleted).apply({
+        scrollIntoView: true,
+        reverting: true
+      })
   }
 }, {
   changes: [],

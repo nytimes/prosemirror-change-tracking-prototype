@@ -5,11 +5,20 @@
 
 <style>
   .ProseMirror-content { border: 1px solid silver }
+  .ProseMirror { margin-bottom: 1em }
   .inserted { color: #0a0 }
   .deleted { color: #d00; text-decoration: line-through; }
+  .change {
+    background: #f9f9f9; border-radius: 5px;
+    margin: 2px 0; padding: 3px 5px;
+    white-space: nowrap;
+    overflow: hidden;
+  }
 </style>
 
 <h1>Change tracking demo</h1>
+
+<p><label><input type=checkbox onchange='tracking.author = this.checked ? "you" : null'> Track changes</label></p>
 
 <div id=content style="display: none">
   <h2>Some content</h2>
