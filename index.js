@@ -56,7 +56,7 @@ exports.changeTracking = new Plugin(class ChangeTracking {
     if (!this.author) // FIXME split changes when typing inside them?
       this.changes = filterMap(this.changes, ch => ch.map(transform))
     else
-      this.record(transform)
+      this.record(transform, this.author)
     this.updateAnnotations()
   }
 
