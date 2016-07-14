@@ -20,6 +20,7 @@ class TrackedChange {
     return this.deleted.content.textBetween(0, this.deleted.content.size, " ")
   }
 }
+exports.TrackedChange = TrackedChange
 
 function applyAndSlice(doc, changes, from, to) {
   let tr = new Transform(doc)
@@ -173,7 +174,8 @@ exports.changeTracking = new Plugin(class ChangeTracking {
     if (this.forgetChange(change))
       this.pm.tr.replace(change.from, change.to, change.deleted).apply({
         scrollIntoView: true,
-        reverting: true
+        reverting: true,
+        addToHistory: false
       })
   }
 }, {

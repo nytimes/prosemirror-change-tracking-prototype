@@ -61,7 +61,7 @@ test("del_adjacent", "foobar",
 test("add_del", "foobar",
      ins(4, "aa"), del(2, 4),
      '2-4<"oo">')
-     
+
 test("del_add", "foobar",
      del(2, 4), ins(2, "aa"),
      '2-4<"oo">')
