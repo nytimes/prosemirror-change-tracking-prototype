@@ -49,12 +49,15 @@ exports.changeTracking = new Plugin(class ChangeTracking {
     this.pm.on.transform.remove(this.onTransform)
   }
 
+  // FIXME handle undo specially somehow. Undo of delete currently
+  // ends up adding a new version of the content to the tracked
+  // change. (Might be able to cut it down with diffing)
   onTransform(transform) {
-    if (!this.author)
+    if (!this.author) // FIXME split changes when typing inside them?
       this.changes = filterMap(this.changes, ch => ch.map(transform))
     else
       this.record(transform)
-    this.annotate()
+    this.updateAnnotations()
   }
 
   record(transform, author) {
@@ -93,24 +96,47 @@ exports.changeTracking = new Plugin(class ChangeTracking {
     this.changes.splice(i, 0, new TrackedChange(start, end, doc.slice(start, end), author))
   }
 
-  // FIXME take a more efficient approach here
-  // (or wait for intelligent annotation diffing in a later PM release)
-  annotate() {
-    this.annotations.forEach(a => this.pm.removeRange(a))
-    this.annotations = this.changes.map(ch => this.pm.markRange(ch.start, ch.end, rangeOptionsFor(ch)))
+  updateAnnotations() {
+    // See if our document annotations still match the set of changes,
+    // and update them if they don't.
+    let iA = 0
+    for (let iC = 0; iC < this.changes.length; iC++) {
+      let change = this.changes[iC], matched = false
+      let deletedText = change.old.content.textBetween(0, change.old.content.size, " ")
+      while (iA < this.annotations.length) {
+        let ann = this.annotations[iA]
+        if (ann.from > change.end) break
+        if (ann.from == change.start && ann.to == change.end && ann.options.deletedText == deletedText) {
+          iA++
+          matched = true
+        } else {
+          this.pm.removeRange(ann)
+          this.annotations.splice(iA, 1)
+        }
+      }
+      if (!matched) {
+        let ann = this.pm.markRange(change.start, change.end, rangeOptionsFor(change, deletedText))
+        this.annotations.splice(iA++, 0, ann)
+      }
+    }
+    for (let i = iA; i < this.annotations.length; i++) {
+      this.pm.removeRange(this.annotations[iA])
+    }
+    this.annotations.length = iA
   }
 }, {
-  changes: []
+  changes: [],
+  author: null
 })
 
-function rangeOptionsFor(change) {
+function rangeOptionsFor(change, deletedText) {
   let options = {}
   if (change.start == change.end) options.removeWhenEmpty = false
   else options.className = "inserted"
-  let text = change.old.content.textBetween(0, change.old.content.size, " ")
-  if (text) {
+  if (deletedText) {
+    options.deletedText = deletedText
     let elt = options.elementBefore = document.createElement("span")
-    elt.textContent = text
+    elt.textContent = deletedText
     elt.className = "deleted"
   }
   return options
