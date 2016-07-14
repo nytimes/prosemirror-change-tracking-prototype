@@ -26,45 +26,49 @@ function applyAndSlice(doc, changes, from, to) {
   return tr.doc.slice(from, tr.map(to))
 }
 
-function findDiff(a, b, pos) {
+function findDiff(a, b, pos, minStart) {
   let start = a.findDiffStart(b, pos)
   if (!start) return null
   let {a: endA, b: endB} = a.findDiffEnd(b, pos + a.size, pos + b.size)
-  if (endA < start) {
-    endB += start - endA
-    endA = start
-  }
-  if (endB < start) {
-    endA += start - endB
-    endB = start
+  start = Math.min(start, endA, endB)
+  if (start < minStart) {
+    let dist = minStart - start
+    endA += dist; endB += dist; start += dist
   }
   return {start, endA, endB}
 }
 
-function minimizeChange(change, doc) {
+function minimizeChange(change, doc, side) {
   let changedDoc = new Transform(doc).replace(change.from, change.to, change.old).doc
 
   let $from = doc.resolve(change.from), sameDepth = $from.depth
   while (change.to > $from.end(sameDepth)) --sameDepth
 
   let node = $from.node(sameDepth)
-  let nodePos = $from.before(sameDepth)
-  let changedNode = changedDoc.nodeAt(nodePos)
+  let nodePos = sameDepth ? $from.before(sameDepth) : -1
+  let changedNode = sameDepth ? changedDoc.nodeAt(nodePos) : changedDoc
 
-  let diff = findDiff(node.content, changedNode.content, nodePos + 1)
-  if (!diff) return null
-  if (diff.start == change.from && diff.endA == change.to) return change
-  if (diff.endA < diff.start) console.log("OUCH", diff, change.from, node.content + " - " + changedNode.content)
-  return new TrackedChange(diff.start, diff.endA, changedDoc.slice(diff.start, diff.endB), change.author)
+  if (side == -1) {
+    let diffStart = node.content.findDiffStart(changedNode.content, nodePos + 1)
+    if (!diffStart) return null
+    if (diffStart == change.from || diffStart >= change.to) return change
+    return new TrackedChange(diffStart, change.to, changedDoc.slice(diffStart, change.to), change.author)
+  } else {
+    let diffEnd = node.content.findDiffEnd(changedNode.content, nodePos + node.content.size + 1,
+                                           nodePos + changedNode.content.size + 1)
+    if (!diffEnd) return null
+    if (diffEnd.a == change.to || diffEnd.a <= change.from) return change
+    return new TrackedChange(change.from, diffEnd.a, changedDoc.slice(change.from, diffEnd.b), change.author)
+  }
 }
 
 function mapChanges(changes, map, author, updated, docAfter) {
   let result = []
   for (let i = 0; i < changes.length; i++) {
-    let change = changes[i], mapped = change.map(map, author == change.author)
+    let change = changes[i], mapped = change.map(map, author == change.author), idx
     if (mapped) {
-      if (updated && updated.indexOf(change) > -1)
-        mapped = minimizeChange(mapped, docAfter)
+      if (updated && (idx = updated.indexOf(change)) > -1)
+        mapped = minimizeChange(mapped, docAfter, updated[idx + 1])
       if (mapped) result.push(mapped)
     }
   }
@@ -119,12 +123,13 @@ exports.changeTracking = new Plugin(class ChangeTracking {
 
         changes.push(next)
         newContent = true
-        this.changes.splice(j, 1)
+        this.changes.splice(j--, 1)
       }
 
       let newFrom = Math.min(change.from, from), newTo = Math.max(changes[changes.length - 1].to, to)
       let slice = newContent ? applyAndSlice(doc, changes, newFrom, newTo) : change.old
-      updatedChanges.push(this.changes[i] = new TrackedChange(newFrom, newTo, slice, change.author))
+      updatedChanges.push(this.changes[i] = new TrackedChange(newFrom, newTo, slice, change.author),
+                          from <= changes[0].from ? -1 : 1)
       return
     }
     this.changes.splice(i, 0, new TrackedChange(from, to, doc.slice(from, to), author))

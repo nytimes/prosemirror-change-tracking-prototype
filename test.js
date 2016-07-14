@@ -15,7 +15,7 @@ function test(name, content, ...rest) {
   rest.forEach(change => change(pm))
   let found = changeTracking.get(pm).changes.map(ch => ch.from + "-" + ch.to + "" + ch.old.content).join(" ")
   if (found != result) {
-    output("Unexpected outcome in <a href='#" + name + "'>" + name + "</a>:\n  " + found + "\n  " + result)
+    output("Unexpected outcome in <a href='#" + name + "'>" + name + "</a>:\n  " + found.replace(/</, "&lt;") + "\n  " + result.replace(/</, "&lt;"))
     failed++
   }
 }
@@ -29,6 +29,10 @@ function ins(at, text, end) {
 }
 
 function undo(pm) { return pm.history.undo() }
+
+function split(at) {
+  return pm => pm.tr.split(at).apply()
+}
 
 function del(from, to) {
   return pm => pm.tr.delete(from, to).apply()
@@ -66,6 +70,14 @@ test("join_adds", "foobar",
      ins(2, "xy"), ins(7, "zz"), del(3, 8),
      '2-4<"oob">')
 
+test("join_adds_around", "foobar",
+     ins(2, "xy"), ins(7, "zz"), del(1, 9),
+     '1-1<"foob">')
+
+test("join_three_adds", "foobar",
+     ins(2, "xy"), ins(5, "zz"), ins(8, "qq"), del(3, 9),
+     '2-4<"oo">')
+
 test("add_del_cancel", "foo",
      ins(2, "ab"), del(2, 4),
      "")
@@ -90,5 +102,20 @@ test("del_add_cancel_separate_matching_context", "fababab",
      del(4, 5), del(3, 4), del(2, 3), ins(2, "a"), ins(3, "b"), ins(4, "a"),
      "")
 
+test("del_paragraph", "foo\nbar\nbaz",
+     del(4, 11),
+     '4-4<paragraph, paragraph("bar"), paragraph>')
+
+test("create_paragraph", "foobar",
+     split(4),
+     '4-6<>')
+
+test("create_then_del_paragraph", "foobar",
+     split(4), del(4, 6),
+     "")
+
+test("del_then_restore_paragraph", "foo\nbar",
+     del(4, 6), split(4),
+     "")
 
 output(failed ? failed + " tests failed" : "All passed")
