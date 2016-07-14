@@ -1,14 +1,6 @@
 const {Plugin} = require("prosemirror/src/edit")
 const {Slice} = require("prosemirror/src/model")
-
-function appendSlice(a, b) {
-  if (!a.size) return b
-  if (!b.size) return a
-  // FIXME this is a trivial impl, needs to be properly implemented
-  if (a.openLeft || a.openRight || b.openLeft || b.openRight || !a.possibleParent.sameMarkup(b.possibleParent))
-    throw new RangeError("Complex slices not supported yet")
-  return new Slice(a.content.append(b.content), 0, 0, a.possibleParent)
-}
+const {Transform} = require("prosemirror/src/transform")
 
 class TrackedChange {
   constructor(start, end, old, author) {
@@ -33,6 +25,15 @@ function filterMap(arr, f) {
     if (val) result.push(val)
   }
   return result
+}
+
+function applyAndSlice(doc, changes, start, end) {
+  let tr = new Transform(doc)
+  for (let i = changes.length - 1; i >= 0; i--) {
+    let change = changes[i]
+    tr.replace(change.start, change.end, change.old)
+  }
+  return tr.doc.slice(start, tr.map(end))
 }
 
 exports.changeTracking = new Plugin(class ChangeTracking {
@@ -72,22 +73,21 @@ exports.changeTracking = new Plugin(class ChangeTracking {
       if (change.author != author || change.end < start) continue
       if (change.start > end) break
 
-      let slice = change.old, sliceEnd = change.end
-      if (start < change.start) slice = appendSlice(doc.slice(start, change.start), slice)
+      let changes = [change], newContent = start < change.start || end > change.end
 
       for (let j = i + 1; j < this.changes.length; j++) {
         let next = this.changes[j]
         if (next.author != author) continue
         if (next.start > end) break
 
-        slice = appendSlice(appendSlice(slice, doc.slice(sliceEnd, next.start)), next.old)
-        sliceEnd = next.end
+        changes.push(next)
+        newContent = true
         this.changes.splice(j, 1)
       }
 
-      if (end > sliceEnd) slice = appendSlice(slice, doc.slice(sliceEnd, end))
-      this.changes[i] = new TrackedChange(Math.min(change.start, start), Math.max(sliceEnd, end),
-                                          slice, change.author)
+      let newStart = Math.min(change.start, start), newEnd = Math.max(changes[changes.length - 1].end, end)
+      let slice = newContent ? applyAndSlice(doc, changes, newStart, newEnd) : change.old
+      this.changes[i] = new TrackedChange(newStart, newEnd, slice, change.author)
       return
     }
     this.changes.splice(i, 0, new TrackedChange(start, end, doc.slice(start, end), author))
@@ -97,8 +97,21 @@ exports.changeTracking = new Plugin(class ChangeTracking {
   // (or wait for intelligent annotation diffing in a later PM release)
   annotate() {
     this.annotations.forEach(a => this.pm.removeRange(a))
-    this.annotations = this.changes.map(ch => this.pm.markRange(ch.start, ch.end, {className: "inserted"}))
+    this.annotations = this.changes.map(ch => this.pm.markRange(ch.start, ch.end, rangeOptionsFor(ch)))
   }
 }, {
   changes: []
 })
+
+function rangeOptionsFor(change) {
+  let options = {}
+  if (change.start == change.end) options.removeWhenEmpty = false
+  else options.className = "inserted"
+  let text = change.old.content.textBetween(0, change.old.content.size, " ")
+  if (text) {
+    let elt = options.elementBefore = document.createElement("span")
+    elt.textContent = text
+    elt.className = "deleted"
+  }
+  return options
+}

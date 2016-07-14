@@ -6,7 +6,7 @@
     "demo": "moduleserve --port 8000 ."
   },
   "dependencies": {
-    "prosemirror": "^0.8.0"
+    "prosemirror": "git://github.com/prosemirror/prosemirror.git#provisional-inline-widget"
   },
   "devDependencies": {
     "moduleserve": "^0.8.0"
