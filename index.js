@@ -1,39 +1,74 @@
 const {Plugin} = require("prosemirror/src/edit")
-const {Slice} = require("prosemirror/src/model")
 const {Transform} = require("prosemirror/src/transform")
 
 class TrackedChange {
-  constructor(start, end, old, author) {
-    this.start = start
-    this.end = end
+  constructor(from, to, old, author) {
+    this.from = from
+    this.to = to
     this.old = old
     this.author = author
   }
 
   map(mapping, inclusive) {
-    let start = mapping.map(this.start, inclusive ? -1 : 1)
-    let end = mapping.map(this.end, inclusive ? 1 : -1)
-    if (start > end || start == end && !this.old.size) return null
-    return new TrackedChange(start, end, this.old, this.author)
+    let from = mapping.map(this.from, inclusive ? -1 : 1)
+    let to = mapping.map(this.to, inclusive ? 1 : -1)
+    if (from > to || from == to && !this.old.size) return null
+    return new TrackedChange(from, to, this.old, this.author)
   }
 }
 
-function filterMap(arr, f) {
-  let result = []
-  for (let i = 0; i < arr.length; i++) {
-    let val = f(arr[i])
-    if (val) result.push(val)
-  }
-  return result
-}
-
-function applyAndSlice(doc, changes, start, end) {
+function applyAndSlice(doc, changes, from, to) {
   let tr = new Transform(doc)
   for (let i = changes.length - 1; i >= 0; i--) {
     let change = changes[i]
-    tr.replace(change.start, change.end, change.old)
+    tr.replace(change.from, change.to, change.old)
   }
-  return tr.doc.slice(start, tr.map(end))
+  return tr.doc.slice(from, tr.map(to))
+}
+
+function findDiff(a, b, pos) {
+  let start = a.findDiffStart(b, pos)
+  if (!start) return null
+  let {a: endA, b: endB} = a.findDiffEnd(b, pos + a.size, pos + b.size)
+  if (endA < start) {
+    endB += start - endA
+    endA = start
+  }
+  if (endB < start) {
+    endA += start - endB
+    endB = start
+  }
+  return {start, endA, endB}
+}
+
+function minimizeChange(change, doc) {
+  let changedDoc = new Transform(doc).replace(change.from, change.to, change.old).doc
+
+  let $from = doc.resolve(change.from), sameDepth = $from.depth
+  while (change.to > $from.end(sameDepth)) --sameDepth
+
+  let node = $from.node(sameDepth)
+  let nodePos = $from.before(sameDepth)
+  let changedNode = changedDoc.nodeAt(nodePos)
+
+  let diff = findDiff(node.content, changedNode.content, nodePos + 1)
+  if (!diff) return null
+  if (diff.start == change.from && diff.endA == change.to) return change
+  if (diff.endA < diff.start) console.log("OUCH", diff, change.from, node.content + " - " + changedNode.content)
+  return new TrackedChange(diff.start, diff.endA, changedDoc.slice(diff.start, diff.endB), change.author)
+}
+
+function mapChanges(changes, map, author, updated, docAfter) {
+  let result = []
+  for (let i = 0; i < changes.length; i++) {
+    let change = changes[i], mapped = change.map(map, author == change.author)
+    if (mapped) {
+      if (updated && updated.indexOf(change) > -1)
+        mapped = minimizeChange(mapped, docAfter)
+      if (mapped) result.push(mapped)
+    }
+  }
+  return result
 }
 
 exports.changeTracking = new Plugin(class ChangeTracking {
@@ -49,51 +84,50 @@ exports.changeTracking = new Plugin(class ChangeTracking {
     this.pm.on.transform.remove(this.onTransform)
   }
 
-  // FIXME handle undo specially somehow. Undo of delete currently
-  // ends up adding a new version of the content to the tracked
-  // change. (Might be able to cut it down with diffing)
   onTransform(transform) {
     if (!this.author) // FIXME split changes when typing inside them?
-      this.changes = filterMap(this.changes, ch => ch.map(transform))
+      this.changes = mapChanges(this.changes, transform)
     else
       this.record(transform, this.author)
     this.updateAnnotations()
   }
 
   record(transform, author) {
+    let updated = []
     for (let i = 0; i < transform.steps.length; i++) {
       let map = transform.maps[i]
       for (let r = 0; r < map.ranges.length; r += 3)
-        this.recordRange(transform.docs[i], map.ranges[r], map.ranges[r] + map.ranges[r + 1], author)
-      this.changes = filterMap(this.changes, ch => ch.map(map, ch.author == author))
+        this.recordRange(transform.docs[i], map.ranges[r], map.ranges[r] + map.ranges[r + 1], author, updated)
+      this.changes = mapChanges(this.changes, map, author, updated, transform.docs[i + 1] || transform.doc)
+      updated.length = 0
     }
   }
 
-  recordRange(doc, start, end, author) {
+  recordRange(doc, from, to, author, updatedChanges) {
     let i = 0
     for (; i < this.changes.length; i++) {
       let change = this.changes[i]
-      if (change.author != author || change.end < start) continue
-      if (change.start > end) break
+      if (change.author != author || change.to < from) continue
+      if (change.from > to) break
 
-      let changes = [change], newContent = start < change.start || end > change.end
+      let changes = [change], newContent = from < change.from || to > change.to
 
       for (let j = i + 1; j < this.changes.length; j++) {
         let next = this.changes[j]
         if (next.author != author) continue
-        if (next.start > end) break
+        if (next.from > to) break
 
         changes.push(next)
         newContent = true
         this.changes.splice(j, 1)
       }
 
-      let newStart = Math.min(change.start, start), newEnd = Math.max(changes[changes.length - 1].end, end)
-      let slice = newContent ? applyAndSlice(doc, changes, newStart, newEnd) : change.old
-      this.changes[i] = new TrackedChange(newStart, newEnd, slice, change.author)
+      let newFrom = Math.min(change.from, from), newTo = Math.max(changes[changes.length - 1].to, to)
+      let slice = newContent ? applyAndSlice(doc, changes, newFrom, newTo) : change.old
+      updatedChanges.push(this.changes[i] = new TrackedChange(newFrom, newTo, slice, change.author))
       return
     }
-    this.changes.splice(i, 0, new TrackedChange(start, end, doc.slice(start, end), author))
+    this.changes.splice(i, 0, new TrackedChange(from, to, doc.slice(from, to), author))
   }
 
   updateAnnotations() {
@@ -105,8 +139,8 @@ exports.changeTracking = new Plugin(class ChangeTracking {
       let deletedText = change.old.content.textBetween(0, change.old.content.size, " ")
       while (iA < this.annotations.length) {
         let ann = this.annotations[iA]
-        if (ann.from > change.end) break
-        if (ann.from == change.start && ann.to == change.end && ann.options.deletedText == deletedText) {
+        if (ann.from > change.to) break
+        if (ann.from == change.from && ann.to == change.to && ann.options.deletedText == deletedText) {
           iA++
           matched = true
         } else {
@@ -115,7 +149,7 @@ exports.changeTracking = new Plugin(class ChangeTracking {
         }
       }
       if (!matched) {
-        let ann = this.pm.markRange(change.start, change.end, rangeOptionsFor(change, deletedText))
+        let ann = this.pm.markRange(change.from, change.to, rangeOptionsFor(change, deletedText))
         this.annotations.splice(iA++, 0, ann)
       }
     }
@@ -131,7 +165,7 @@ exports.changeTracking = new Plugin(class ChangeTracking {
 
 function rangeOptionsFor(change, deletedText) {
   let options = {}
-  if (change.start == change.end) options.removeWhenEmpty = false
+  if (change.from == change.to) options.removeWhenEmpty = false
   else options.className = "inserted"
   if (deletedText) {
     options.deletedText = deletedText
