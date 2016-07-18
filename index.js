@@ -36,20 +36,18 @@ function minimizeChange(change, doc, side) {
   let changedDoc = tr.doc
 
   let $from = doc.resolve(change.from), sameDepth = $from.depth
-  while (change.to > $from.end(sameDepth)) --sameDepth
+  let $changedFrom = changedDoc.resolve(change.from), changeEnd = change.from + change.deleted.size
+  while (change.to > $from.end(sameDepth) || changeEnd > $changedFrom.end(sameDepth)) --sameDepth
 
-  let node = $from.node(sameDepth)
-  let nodePos = sameDepth ? $from.before(sameDepth) : -1
-  let changedNode = sameDepth ? changedDoc.nodeAt(nodePos) : changedDoc
+  let node = $from.node(sameDepth), changedNode = $changedFrom.node(sameDepth)
 
   if (side == -1) {
-    let diffStart = node.content.findDiffStart(changedNode.content, nodePos + 1)
+    let diffStart = node.content.findDiffStart(changedNode.content, $from.start(sameDepth))
     if (!diffStart) return null
     if (diffStart == change.from || diffStart >= change.to) return change
     return new TrackedChange(diffStart, change.to, changedDoc.slice(diffStart, tr.map(change.to)), change.author)
   } else {
-    let diffEnd = node.content.findDiffEnd(changedNode.content, nodePos + node.content.size + 1,
-                                           nodePos + changedNode.content.size + 1)
+    let diffEnd = node.content.findDiffEnd(changedNode.content, $from.end(sameDepth), $changedFrom.end(sameDepth))
     if (!diffEnd) return null
     if (diffEnd.a == change.to || diffEnd.a <= change.from || diffEnd.b <= change.from) return change
     return new TrackedChange(change.from, diffEnd.a, changedDoc.slice(change.from, diffEnd.b), change.author)
