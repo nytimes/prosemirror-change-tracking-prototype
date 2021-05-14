@@ -1,7 +1,7 @@
-const {Plugin} = require("prosemirror/src/edit")
-const {Transform} = require("prosemirror/src/transform")
+import {Plugin} from "prosemirror-state"
+import {Transform} from "prosemirror-transform"
 
-class TrackedChange {
+export class TrackedChange {
   constructor(from, to, deleted, author) {
     this.from = from
     this.to = to
@@ -20,7 +20,6 @@ class TrackedChange {
     return this.deleted.content.textBetween(0, this.deleted.content.size, " ")
   }
 }
-exports.TrackedChange = TrackedChange
 
 function applyAndSlice(doc, changes, from, to) {
   let tr = new Transform(doc)
@@ -67,7 +66,7 @@ function mapChanges(changes, map, author, updated, docAfter) {
   return result
 }
 
-exports.changeTracking = new Plugin(class ChangeTracking {
+export const changeTracking = new Plugin(class ChangeTracking {
   constructor(pm, options) {
     this.pm = pm
     this.changes = options.changes.slice()
